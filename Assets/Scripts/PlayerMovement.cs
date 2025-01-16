@@ -1,3 +1,4 @@
+using Cinemachine;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -9,7 +10,7 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private float runSpeed = 50f;
     [SerializeField] private float[] speedMultipliers = { 1f, 2f, 2.5f, 3f}; 
     //[SerializeField] private float[] gearsSmoothTime = { 0.1f ,0.3f, 0.5f, 0.8f }; //smooth damp time for every gear (SmoothDamp approach)
-    [SerializeField] private float[] gearsAccelerations = { 60f, 10f, 5f, 2f }; //MoveTowards approach
+    [SerializeField] private float runAcceleration = 60f; //MoveTowards approach
     [SerializeField] private float[] gearsAngularAccelerations = { 60f, 40f, 30f, 20f };
 
     [Tooltip("Rotation speed of the character")]
@@ -177,10 +178,21 @@ public class PlayerMovement : MonoBehaviour
         //Check for Slide
         CheckForCrouchSlide();
 
+        //Camerawobble
+        if (!isSliding)
+        {
+            if (GetComponent<Rigidbody>().velocity.magnitude >= 0.1f)
+                //CameraWobble(0.05f, 0.5f);
+                CameraWobble(0.4f, 4f);
+            else
+                CameraWobble(0.0f, 0.0f);
+        }
+
         //Check for Ground
         if (!CheckForGround())
         {
             //NOTE: Keep an eye on parameters reset
+            CameraWobble(0.0f, 0.0f);
             currentState = MovementState.InAir;
             return;
         }
@@ -188,6 +200,7 @@ public class PlayerMovement : MonoBehaviour
         //Check for Slope
         if (CheckForSlope())
         {
+            CameraWobble(0f, 0f);
             currentState = MovementState.OnSlope;
             return;
         }
@@ -251,7 +264,7 @@ public class PlayerMovement : MonoBehaviour
 
             if(hit.transform == null)
             {
-               
+               //TODO: to implement
             }
 
         }
@@ -265,7 +278,7 @@ public class PlayerMovement : MonoBehaviour
 
         if (inAirTimer < 0.8f)
         {
-            finalVel = Vector3.MoveTowards(_rigidbody.velocity, _rigidbody.velocity.magnitude * inputDir, gearsAccelerations[currentGear] * Time.fixedDeltaTime);
+            finalVel = Vector3.MoveTowards(_rigidbody.velocity, _rigidbody.velocity.magnitude * inputDir, runAcceleration * Time.fixedDeltaTime);
 
             Vector2 horizontalFinalVel = new Vector2(finalVel.x, finalVel.z);
 
@@ -282,7 +295,7 @@ public class PlayerMovement : MonoBehaviour
     Vector3 ComputeVelocity(bool onSlope)
     {
         //Direction computing
-        Vector3 inputDir = transform.right * _moveInput.x + transform.forward * _moveInput.y;
+        Vector3 inputDir = (transform.right * _moveInput.x + transform.forward * _moveInput.y);
 
         if (isSliding)
             inputDir = _lastPlayerInputDirection;
@@ -304,7 +317,7 @@ public class PlayerMovement : MonoBehaviour
         movDir = movDir.normalized;
         //Lerp Speed -> based on the maximum speed of the gear
         //Lerp Direction Change -> based on a percentage of control based on the current gear
-        targetSpeed = Mathf.MoveTowards(_rigidbody.velocity.magnitude, targetSpeed, gearsAccelerations[currentGear] * Time.fixedDeltaTime);
+        targetSpeed = Mathf.MoveTowards(_rigidbody.velocity.magnitude, targetSpeed, runAcceleration * Time.fixedDeltaTime);
 
         //Vector3 targetVel = targetSpeed * LerpDirectionChange(movDir, gearsAngularAccelerations[currentGear]);
         //Vector3 targetVel = LerpSpeed(targetSpeed, gearsAccelerations[currentGear]) *LerpDirectionChange(movDir, gearsAngularAccelerations[currentGear]);
@@ -314,11 +327,11 @@ public class PlayerMovement : MonoBehaviour
         if (isSliding)
             finalVel = _rigidbody.velocity.magnitude * movDir;
         else
-            finalVel = targetSpeed * LerpDirectionChange(movDir, gearsAngularAccelerations[currentGear], onSlope);
+            finalVel = targetSpeed * movDir;
 
 
         if (!isSliding)
-            _lastPlayerInputDirection = transform.right * _moveInput.x + transform.forward * _moveInput.y;
+            _lastPlayerInputDirection = (transform.right * _moveInput.x + transform.forward * _moveInput.y).normalized;
 
         //limit velocity on slope
         if (onSlope)
@@ -328,10 +341,11 @@ public class PlayerMovement : MonoBehaviour
         return finalVel;
     }
 
-
+    //Lerp direction change not useful here
+    /*
     Vector3 LerpDirectionChange(Vector3 targetDir, float angularAccel, bool onSlope)
     {
-        Vector3 orientationVector = transform.right * _moveInput.x + transform.forward * _moveInput.y;
+        Vector3 orientationVector = (transform.right * _moveInput.x + transform.forward * _moveInput.y).normalized;
 
         Vector3 currentDir = onSlope ? Vector3.ProjectOnPlane(orientationVector, slopeHit.normal) : _rigidbody.velocity.normalized;
 
@@ -339,7 +353,7 @@ public class PlayerMovement : MonoBehaviour
 
         return dir;
     }
-
+    */
     private void CameraRotation()
     {
         // if there is an input
@@ -400,13 +414,15 @@ public class PlayerMovement : MonoBehaviour
 
     void CheckForSprint()
     {
-        //Check for SprintState
-        if (_playerInput.sprint)
+        //Check for SprintState only if I'm trying to move forward
+        if (_playerInput.sprint && _moveInput.y > 0.1f)
         {
             isSprinting = true;
         }
         else
+        {
             isSprinting = false;
+        }
     }
     public bool CheckForGround()
     {
@@ -441,6 +457,15 @@ public class PlayerMovement : MonoBehaviour
             _rigidbody.AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
             _playerInput.jump = false;
         }
+    }
+
+    private void CameraWobble(float amplitudeGain, float frequencyGain)
+    {
+        CinemachineBasicMultiChannelPerlin noise = followPlayerCamera.GetCinemachineComponent<CinemachineBasicMultiChannelPerlin>();
+
+        noise.m_AmplitudeGain = Mathf.Lerp(noise.m_AmplitudeGain, amplitudeGain, 4.5f * Time.deltaTime);
+        noise.m_FrequencyGain = Mathf.Lerp(noise.m_FrequencyGain, frequencyGain, 4.5f * Time.deltaTime);
+
     }
 
     private static float ClampAngle(float lfAngle, float lfMin, float lfMax)

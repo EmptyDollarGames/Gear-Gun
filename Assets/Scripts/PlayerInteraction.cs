@@ -4,7 +4,7 @@ using UnityEngine;
 
 public class PlayerInteraction : MonoBehaviour
 {
-    [SerializeField] private float currentLife = 100f;
+    [SerializeField] private float startingLife = 100f;
 
     PlayerController _controller;
     PlayerInputs _input;
@@ -13,8 +13,11 @@ public class PlayerInteraction : MonoBehaviour
     private bool isInteracting = false;
     public bool IsInteracting { get { return isInteracting; } }
 
+    private float currentLife;
+
     private void Start()
     {
+        currentLife = startingLife;
         _controller = GetComponent<PlayerController>();
         _input = GetComponent<PlayerInputs>();
         _wheel = GetComponentInChildren<WeaponWheel>();
@@ -22,7 +25,6 @@ public class PlayerInteraction : MonoBehaviour
 
     private void Update()
     {
-
         HandleFireAndReload();
         HandleLoot();
         HandleInteractable();
@@ -57,6 +59,11 @@ public class PlayerInteraction : MonoBehaviour
     void HandleInteractable()
     {
         //TODO: to implement -> INTERACTABLE interface
+    }
+
+    void OnTakeDamage(float dmg)
+    {
+        currentLife -= dmg;
     }
 
 }

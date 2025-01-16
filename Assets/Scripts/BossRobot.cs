@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.AI;
 
 public class BossRobot : MonoBehaviour
 {
@@ -9,6 +10,12 @@ public class BossRobot : MonoBehaviour
     public RobotState currentState;
 
     public float jumpForce = 10f;
+    public float dashAcceleration = 50f;
+    public float dashSpeed = 100f;
+    public float rotationVelocity = 3f;
+    public float stoppingDistanceFromTarget = 5f;
+
+    public NavMeshAgent _navMesh;
 
     [Tooltip("If the character is grounded or not. Not part of the CharacterController built in grounded check")]
     public bool Grounded = true;
@@ -19,12 +26,18 @@ public class BossRobot : MonoBehaviour
     [Tooltip("What layers the character uses as ground")]
     public LayerMask GroundLayers;
 
+    private Rigidbody rb;
+
     private bool isJumping = false;
     public bool DebugJumpTrigger = false;
+    private Transform target;
+    private Vector3 currentVelocity;
 
     private void Start()
     {
         currentState = RobotState.Idle;
+        target = GameObject.FindGameObjectWithTag("Player").transform;
+        rb = GetComponent<Rigidbody>();
     }
 
     private void Update()
@@ -43,6 +56,8 @@ public class BossRobot : MonoBehaviour
         //Debug
         if (Input.GetKeyDown(KeyCode.F))
             DebugJumpTrigger = true;
+
+        RotateTowardPlayer();
     }
 
     void HandleIdleState()
@@ -52,8 +67,8 @@ public class BossRobot : MonoBehaviour
         if (Grounded && !isJumping && DebugJumpTrigger)
         {
             Debug.Log("Chiamato");
-            DebugJumpTrigger = false;
-            StartCoroutine(JumpAndSmash());           
+            DebugJumpTrigger = false;          
+            StartCoroutine(DashPunch());
         }
 
     }
@@ -64,41 +79,40 @@ public class BossRobot : MonoBehaviour
 
     }
 
-    IEnumerator JumpAndSmash()
+    IEnumerator DashPunch()
     {
-        isJumping = true;
-        GetComponent<Animator>().SetBool("Jump", true);
+        //Dash
+        _navMesh.acceleration = dashAcceleration;
+        _navMesh.autoBraking = true;
+        _navMesh.speed = dashSpeed;
+        _navMesh.stoppingDistance = stoppingDistanceFromTarget;
+        _navMesh.SetDestination(target.position);
 
-        yield return new WaitForSeconds(1f);
-
-        GetComponent<Animator>().SetBool("InAir", true);
-        GetComponent<Rigidbody>().AddForce(Vector3.up * jumpForce, ForceMode.Impulse);
-
-        float elapsedTime = 0f;
-        float duration = 3f;
-
-        GameObject player = GameObject.FindGameObjectWithTag("Player");
-
-        while (elapsedTime < duration)
+        while (!_navMesh.isStopped)
         {
-            if (Mathf.Sign(GetComponent<Rigidbody>().velocity.y) < 0)
-                if (Grounded)
-                    break;
-            Vector3 dir = -(transform.position - player.transform.position).normalized;
-
-            GetComponent<Rigidbody>().AddForce(dir * 1f, ForceMode.Force);
-            elapsedTime += Time.deltaTime;
+            if (Vector3.Distance(target.position, transform.position) <= stoppingDistanceFromTarget)
+            {
+                _navMesh.stoppingDistance = 0f;
+                _navMesh.SetDestination(transform.position);
+                break;
+            }
+            else
+                _navMesh.SetDestination(target.position);
             yield return null;
         }
 
-        while(!Grounded)
-        {
-            yield return null;
-        }
+        //Little Pause
 
-        GetComponent<Animator>().SetBool("Jump", false);
-        GetComponent<Animator>().SetBool("InAir", false);
-        isJumping = false;
+        //Trigger Punch Animation
+
+        yield return null;
+    }
+
+    void RotateTowardPlayer()
+    {
+        Vector3 newDir = -(transform.position - target.position).normalized;
+        Quaternion targetRotation = Quaternion.LookRotation(newDir, transform.up);
+        transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, Time.deltaTime * rotationVelocity);
     }
 
     void CheckGrounded()
