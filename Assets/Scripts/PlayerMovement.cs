@@ -8,9 +8,13 @@ public class PlayerMovement : MonoBehaviour
     [Header("Movement Values")]
     [SerializeField] private float walkSpeed = 20f;
     [SerializeField] private float runSpeed = 50f;
+    [SerializeField] private float runAcceleration = 60f;
+    [SerializeField] private float runDeceleration = 100f;
+    [Tooltip("1 = normalized input value; 10 = maximum air control value")]
+    [Range(1f, 10f)] [SerializeField] private float airControlValue = 1f;
+    [SerializeField] private float inAirAcceleration = 60f;
     [SerializeField] private float[] speedMultipliers = { 1f, 2f, 2.5f, 3f}; 
     //[SerializeField] private float[] gearsSmoothTime = { 0.1f ,0.3f, 0.5f, 0.8f }; //smooth damp time for every gear (SmoothDamp approach)
-    [SerializeField] private float runAcceleration = 60f; //MoveTowards approach
     [SerializeField] private float[] gearsAngularAccelerations = { 60f, 40f, 30f, 20f };
 
     [Tooltip("Rotation speed of the character")]
@@ -43,6 +47,9 @@ public class PlayerMovement : MonoBehaviour
     public float BottomClamp = -90.0f;
     public Cinemachine.CinemachineVirtualCamera followPlayerCamera;
 
+    //Debug
+    public float CurrentTargetSpeed = 0.0f;
+    public float CurrentInput = 0.0f;
 
     private Vector2 _moveInput;
     public enum MovementState { Grounded, InAir, OnWall, OnEdge, OnSlope}
@@ -137,11 +144,11 @@ public class PlayerMovement : MonoBehaviour
         {
             case MovementState.Grounded:
                 //move player
-                if (_moveInput.magnitude > 0.1f || isSliding)
-                {
+ //               if (_moveInput.magnitude > 0.1f || isSliding)
+//                {
                     vel = ComputeVelocity(false);
                     _rigidbody.velocity = new Vector3(vel.x, _rigidbody.velocity.y, vel.z);
-                }
+ //               }
                 break;
             case MovementState.InAir:
 
@@ -278,7 +285,7 @@ public class PlayerMovement : MonoBehaviour
 
         if (inAirTimer < 0.8f)
         {
-            finalVel = Vector3.MoveTowards(_rigidbody.velocity, _rigidbody.velocity.magnitude * inputDir, runAcceleration * Time.fixedDeltaTime);
+            finalVel = Vector3.MoveTowards(_rigidbody.velocity, _rigidbody.velocity.magnitude * inputDir * airControlValue, inAirAcceleration * Time.fixedDeltaTime);
 
             Vector2 horizontalFinalVel = new Vector2(finalVel.x, finalVel.z);
 
@@ -295,10 +302,12 @@ public class PlayerMovement : MonoBehaviour
     Vector3 ComputeVelocity(bool onSlope)
     {
         //Direction computing
-        Vector3 inputDir = (transform.right * _moveInput.x + transform.forward * _moveInput.y);
+        Vector3 inputDir;
 
-        if (isSliding)
+        if (isSliding || _moveInput.magnitude<=0.1f)
             inputDir = _lastPlayerInputDirection;
+        else
+            inputDir = (transform.right * _moveInput.x + transform.forward * _moveInput.y);
 
         Vector3 movDir;
 
@@ -308,16 +317,25 @@ public class PlayerMovement : MonoBehaviour
             movDir = inputDir;
 
         //Speed computing
-        float targetSpeed = isSprinting ? runSpeed : walkSpeed;
+        float targetSpeedValue = _moveInput.magnitude<=0.1f? 0f:isSprinting ? runSpeed : walkSpeed;
 
-        if (currentGear > 0)
-            targetSpeed = runSpeed;
-
-        targetSpeed *= speedMultipliers[currentGear]; //we add the gear speed boost on max velocity
+        targetSpeedValue *= speedMultipliers[currentGear]; //we add the gear speed boost on max velocity
         movDir = movDir.normalized;
-        //Lerp Speed -> based on the maximum speed of the gear
-        //Lerp Direction Change -> based on a percentage of control based on the current gear
-        targetSpeed = Mathf.MoveTowards(_rigidbody.velocity.magnitude, targetSpeed, runAcceleration * Time.fixedDeltaTime);
+
+        float targetAcceleration;
+
+        if (_moveInput.magnitude > 0.1f)
+        {
+            //Lerp Speed and accelerate
+            targetAcceleration = runAcceleration;
+        }
+        else
+        {
+            //Lerp Speed and decelerate
+            targetAcceleration = runDeceleration;
+        }
+
+        float targetSpeed = Mathf.MoveTowards(_rigidbody.velocity.magnitude, targetSpeedValue, targetAcceleration * Time.fixedDeltaTime);
 
         //Vector3 targetVel = targetSpeed * LerpDirectionChange(movDir, gearsAngularAccelerations[currentGear]);
         //Vector3 targetVel = LerpSpeed(targetSpeed, gearsAccelerations[currentGear]) *LerpDirectionChange(movDir, gearsAngularAccelerations[currentGear]);
@@ -327,16 +345,21 @@ public class PlayerMovement : MonoBehaviour
         if (isSliding)
             finalVel = _rigidbody.velocity.magnitude * movDir;
         else
+        {
             finalVel = targetSpeed * movDir;
 
+            if(_moveInput.magnitude>0.1f)
+                _lastPlayerInputDirection = (transform.right * _moveInput.x + transform.forward * _moveInput.y).normalized;
+        }
 
-        if (!isSliding)
-            _lastPlayerInputDirection = (transform.right * _moveInput.x + transform.forward * _moveInput.y).normalized;
 
         //limit velocity on slope
         if (onSlope)
             if (finalVel.magnitude > targetSpeed)
                 finalVel = _rigidbody.velocity.magnitude * movDir;
+
+        CurrentTargetSpeed = targetSpeed;
+        CurrentInput = _moveInput.magnitude;
 
         return finalVel;
     }
