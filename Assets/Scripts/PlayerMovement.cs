@@ -8,10 +8,11 @@ public class PlayerMovement : MonoBehaviour
     [Header("Movement Values")]
     [SerializeField] private float walkSpeed = 20f;
     [SerializeField] private float runSpeed = 50f;
+    [SerializeField] private float crouchSpeed = 3f;
     [SerializeField] private float runAcceleration = 60f;
     [SerializeField] private float runDeceleration = 100f;
     [Tooltip("1 = normalized input value; 10 = maximum air control value")]
-    [Range(1f, 10f)] [SerializeField] private float airControlValue = 1f;
+    [Range(1f, 10f)] [SerializeField] private float inAirSpeed = 1f;
     [SerializeField] private float inAirAcceleration = 60f;
     [SerializeField] private float[] speedMultipliers = { 1f, 2f, 2.5f, 3f}; 
     //[SerializeField] private float[] gearsSmoothTime = { 0.1f ,0.3f, 0.5f, 0.8f }; //smooth damp time for every gear (SmoothDamp approach)
@@ -28,12 +29,16 @@ public class PlayerMovement : MonoBehaviour
     [SerializeField] private Rigidbody _rigidbody;
     [SerializeField] private PlayerInputs _playerInput;
 
-    [Header("Player Floor Checks")]
+    [Header("Environmental Checks")]
     [Tooltip("Useful for rough ground")]
     public float GroundedOffset = -0.14f;
     [Tooltip("The radius of the grounded check. Should match the radius of the CharacterController")]
     public float GroundedRadius = 0.1f;
+    [Tooltip("Max Distance from camera to check if there is a edge top climb")]
+    public float maxEdgeCheckDistance = 1f;
+
     public LayerMask groundMask;
+    public int edgeMask;
     public LayerMask slopeMask;
 
     [Header("Cinemachine")]
@@ -63,6 +68,10 @@ public class PlayerMovement : MonoBehaviour
     private bool isSliding = false;
     private bool wasSliding = false;
     private bool isGearShiftActive = false;
+
+    private bool canMove = true;
+    private bool canRotateVisual = true;
+
     private Vector3 currentVelocity;
     private int currentGear; //0: no sprint; 1: gear1; 2: gear2; 3: gear3
     private Vector3 istantAcceleration;
@@ -74,6 +83,8 @@ public class PlayerMovement : MonoBehaviour
     private float currentGearSmoothTime;
     private const float velocityLerpingTreshold = 0.2f;
     */
+
+    private Transform currentEdge;
 
     private Vector3 refCurrentCrouchingVel;
     private float _rotationVelocity;
@@ -105,7 +116,8 @@ public class PlayerMovement : MonoBehaviour
         currentGearAcceleration = 0f;
         _cinemachineTargetStartPos = cinemachineCameraTarget.transform.localPosition;
 
-        //currentGearSmoothTime = 0f;
+        edgeMask = LayerMask.NameToLayer("Edge");
+
     }
 
     // Update is called once per frame
@@ -173,7 +185,8 @@ public class PlayerMovement : MonoBehaviour
 
     private void LateUpdate()
     {
-        CameraRotation();
+        if(canRotateVisual)
+            CameraRotation();
     }
 
     void HandleGroundState()
@@ -189,7 +202,6 @@ public class PlayerMovement : MonoBehaviour
         if (!isSliding)
         {
             if (GetComponent<Rigidbody>().velocity.magnitude >= 0.1f)
-                //CameraWobble(0.05f, 0.5f);
                 CameraWobble(0.4f, 4f);
             else
                 CameraWobble(0.0f, 0.0f);
@@ -231,8 +243,22 @@ public class PlayerMovement : MonoBehaviour
             currentState = MovementState.OnSlope;
             return;
         }
+
+        //Check for Edge
+        if (CheckForEdge())
+        {
+            //OnAirStateExit
+            inAirTimer = 0f;
+            //OnEdgeStateEnter
+            _rigidbody.isKinematic = true;
+            StartCoroutine(RotateTowardDirection(currentEdge.forward));
+            currentState = MovementState.OnEdge;
+            return;
+        }
+
+
         inAirTimer += Time.deltaTime;
-        //Check for Wall
+
     }
 
     void HandleOnSlopeState()
@@ -262,19 +288,33 @@ public class PlayerMovement : MonoBehaviour
 
     void HandleOnEdgeState()
     {
+        canRotateVisual = false;
+        if (!CheckForEdge())
+        {
+            canRotateVisual = true;
+            if (CheckForGround())
+                currentState = MovementState.Grounded;
+            else
+                currentState = MovementState.InAir;
+        }
+
         if (_playerInput.jump)
         {
-            //check if is last edge
-            RaycastHit hit;
-
-            Physics.Raycast(transform.position + Vector3.up * transform.GetComponent<CapsuleCollider>().height + Vector3.up, transform.forward, out hit, 0.4f);
-
-            if(hit.transform == null)
+            _rigidbody.isKinematic = false;
+            if (_moveInput.y > 0.1f)
             {
-               //TODO: to implement
+                //Climb Up
+            }
+            else
+            {
+                //Bounce Back
+                _rigidbody.AddForce(-Vector3.forward * jumpForce, ForceMode.Impulse);
             }
 
+            canRotateVisual = true;
+            _playerInput.jump = false;
         }
+
     }
 
     void ComputeAirControl()
@@ -283,9 +323,9 @@ public class PlayerMovement : MonoBehaviour
        
         Vector3 finalVel;
 
-        if (inAirTimer < 0.8f)
+        if (inAirTimer < 0.9f)
         {
-            finalVel = Vector3.MoveTowards(_rigidbody.velocity, _rigidbody.velocity.magnitude * inputDir * airControlValue, inAirAcceleration * Time.fixedDeltaTime);
+            finalVel = Vector3.MoveTowards(_rigidbody.velocity, _rigidbody.velocity.magnitude * inputDir * inAirSpeed, inAirAcceleration * Time.fixedDeltaTime);
 
             Vector2 horizontalFinalVel = new Vector2(finalVel.x, finalVel.z);
 
@@ -317,7 +357,7 @@ public class PlayerMovement : MonoBehaviour
             movDir = inputDir;
 
         //Speed computing
-        float targetSpeedValue = _moveInput.magnitude<=0.1f? 0f:isSprinting ? runSpeed : walkSpeed;
+        float targetSpeedValue = _moveInput.magnitude<=0.1f? 0f: isCrouching? crouchSpeed : isSprinting ? runSpeed : walkSpeed;
 
         targetSpeedValue *= speedMultipliers[currentGear]; //we add the gear speed boost on max velocity
         movDir = movDir.normalized;
@@ -343,12 +383,14 @@ public class PlayerMovement : MonoBehaviour
         Vector3 finalVel;
 
         if (isSliding)
+        {
             finalVel = _rigidbody.velocity.magnitude * movDir;
+        }
         else
         {
             finalVel = targetSpeed * movDir;
 
-            if(_moveInput.magnitude>0.1f)
+            if (_moveInput.magnitude > 0.1f)
                 _lastPlayerInputDirection = (transform.right * _moveInput.x + transform.forward * _moveInput.y).normalized;
         }
 
@@ -399,6 +441,23 @@ public class PlayerMovement : MonoBehaviour
             //_rigidbody.MoveRotation(Quaternion.Euler(Vector3.up * _rotationVelocity));
         }
     }
+
+    private bool CheckForEdge()
+    {
+        if(Physics.Raycast(Camera.main.transform.position, transform.forward, out var edgeHit, maxEdgeCheckDistance, ~edgeMask))
+        {
+            Debug.Log("Edge Found!");
+            currentEdge = edgeHit.collider.transform;
+            return true;
+        }
+        else
+        {
+            currentEdge = null;
+        }
+
+        return false;
+    }
+
     void CheckForCrouchSlide()
     {
         if (_playerInput.crouch_slide)
@@ -406,13 +465,17 @@ public class PlayerMovement : MonoBehaviour
 
             if (_rigidbody.velocity.magnitude > walkSpeed)
             {
-                isSliding = true;
                 wasSliding = isSliding;
+                isSliding = true;
+
+                if (!wasSliding)
+                    _rigidbody.AddForce(2f * _rigidbody.velocity.normalized, ForceMode.Impulse);
             }
             else
             {
-                isCrouching = true;
                 wasCrouching = isCrouching;
+                isSliding = false;
+                isCrouching = true;
             }
 
 
@@ -447,6 +510,7 @@ public class PlayerMovement : MonoBehaviour
             isSprinting = false;
         }
     }
+
     public bool CheckForGround()
     {
         // set sphere position, with offset
@@ -505,6 +569,9 @@ public class PlayerMovement : MonoBehaviour
         Gizmos.color = Color.green;
         Gizmos.DrawWireSphere(spherePositionGroundCheck, GroundedRadius);
 
+        Gizmos.color = Color.blue;
+        Gizmos.DrawRay(Camera.main.transform.position, transform.forward * maxEdgeCheckDistance);
+
     }
 
     public int GetGear()
@@ -515,5 +582,19 @@ public class PlayerMovement : MonoBehaviour
     public float GetAcceleration()
     {
         return istantAcceleration.magnitude;
+    }
+
+    IEnumerator RotateTowardDirection(Vector3 newDir)
+    {
+        float elapsedTime = 0f;
+        float duration = 0.5f;
+        Quaternion targetRotation = Quaternion.LookRotation(newDir, transform.up);
+
+        while (elapsedTime < duration)
+        {            
+            transform.rotation = Quaternion.Slerp(transform.rotation, targetRotation, elapsedTime/duration);
+            elapsedTime += Time.deltaTime;
+            yield return null;
+        }
     }
 }
